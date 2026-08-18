@@ -43,6 +43,10 @@
   var ST = (window.solvronix_desk = window.solvronix_desk || {});
   var COLLAPSE_KEY = "st_sidebar_collapsed";
   var FULL_WIDTH_KEY = "container_fullwidth";
+  ST._sidebarTree = ST._sidebarTree || {
+    built: false, building: false, handlersInstalled: false,
+    byParentKey: {}, parentOfKey: {}, nodeByKey: {}
+  };
 
   function isFullWidthEnabled() {
     try {
@@ -1331,6 +1335,212 @@
     });
   }
 
+  /* ────────────────────────────────────────────────────────────────────────────
+     SIDEBAR TREE — single unified module tree in the native left sidebar
+     Frappe's own sidebar renderer (frappe/public/js/frappe/ui/sidebar/sidebar.js)
+     is not vendored in this app, so it can't be patched directly — instead this
+     replaces the item list inside .body-sidebar-top with a custom recursive
+     tree built from solvronix_desk.api.get_workspaces() (same data source
+     injectIconRail()/renderOptionsPanel() already use, across every installed
+     app). Reuses Frappe's own item classnames (standard-sidebar-item,
+     item-anchor, nested-container, active-sidebar, ...) so all existing theme
+     CSS above (colors/hover/active/dark-mode) applies with no duplication.
+     Selecting a parent expands its children indented directly beneath it,
+     instead of navigating to a separate shortcuts section.
+  ──────────────────────────────────────────────────────────────────────────── */
+  var ST_TREE_EXPANDED_KEY = "st_sidebar_tree_expanded";
+
+  function stTreeNorm(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function stTreeNodeKey(page) {
+    return String(page.name || page.title || "");
+  }
+
+  function stTreeRoute(page) {
+    return page.route ||
+      ((frappe.router && frappe.router.slug) ? frappe.router.slug(page.name || page.title || "") : "");
+  }
+
+  function stTreeCssEsc(value) {
+    return (window.CSS && CSS.escape) ? CSS.escape(value) : String(value).replace(/["\\]/g, "\\$&");
+  }
+
+  function loadExpandedTreeSet() {
+    try {
+      var raw = JSON.parse(localStorage.getItem(ST_TREE_EXPANDED_KEY) || "[]");
+      return Array.isArray(raw) ? raw : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveExpandedTreeSet(set) {
+    try { localStorage.setItem(ST_TREE_EXPANDED_KEY, JSON.stringify(set)); } catch (e) {}
+  }
+
+  function setTreeNodeExpanded($item, expanded) {
+    $item.toggleClass("st-tree-expanded", !!expanded);
+    var key = $item.attr("data-st-key") || "";
+    if (!key) return;
+    var set = loadExpandedTreeSet();
+    var idx = set.indexOf(key);
+    if (expanded && idx === -1) set.push(key);
+    if (!expanded && idx !== -1) set.splice(idx, 1);
+    saveExpandedTreeSet(set);
+  }
+
+  function renderTreeNode(page, depth, byParentKey, expandedSet) {
+    var key = stTreeNodeKey(page);
+    var norm = stTreeNorm(page.title || page.name);
+    var children = byParentKey[norm] || [];
+    var hasChildren = children.length > 0;
+    var route = stTreeRoute(page);
+    var slugPath = route ? "/desk/" + encodeURIComponent(route).replace(/%2F/gi, "/") : "#";
+
+    function esc(v) { return frappe.utils.escape_html(String(v || "")); }
+
+    var iconHtml = page.icon ? frappe.utils.icon(page.icon, "sm") : "";
+    var toggleHtml = hasChildren
+      ? '<span class="st-tree-toggle" role="button" aria-label="' + esc(__("Toggle")) + '">' +
+          frappe.utils.icon("chevron-right", "xs") +
+        "</span>"
+      : '<span class="st-tree-toggle st-tree-toggle-spacer"></span>';
+
+    var $item = $(
+      '<div class="standard-sidebar-item st-tree-item' + (depth > 0 ? " indent" : "") + '"' +
+        ' data-st-key="' + esc(key) + '" style="--st-tree-depth:' + depth + '">' +
+        '<a class="item-anchor st-tree-link" href="' + esc(slugPath) + '" data-route="' + esc(route) + '">' +
+          toggleHtml +
+          '<span class="sidebar-item-icon">' + iconHtml + "</span>" +
+          '<span class="sidebar-item-label">' + esc(page.title || page.name) + "</span>" +
+        "</a>" +
+      "</div>"
+    );
+
+    ST._sidebarTree.nodeByKey[key] = { page: page, depth: depth };
+
+    if (hasChildren) {
+      var $nested = $('<div class="nested-container"></div>');
+      children.forEach(function (child) {
+        ST._sidebarTree.parentOfKey[stTreeNodeKey(child)] = key;
+        $nested.append(renderTreeNode(child, depth + 1, byParentKey, expandedSet));
+      });
+      $item.append($nested);
+      if (expandedSet.indexOf(key) !== -1) $item.addClass("st-tree-expanded");
+    }
+
+    return $item;
+  }
+
+  function hideNativeSidebarItems() {
+    if (!ST._sidebarTree.built) return;
+    $(".body-sidebar-top .standard-sidebar-item").each(function () {
+      if ($(this).closest("#st-sidebar-tree").length) return;
+      $(this).addClass("st-native-hidden");
+    });
+  }
+
+  function syncTreeActiveState() {
+    var $tree = $("#st-sidebar-tree");
+    if (!$tree.length) return;
+
+    $tree.find(".standard-sidebar-item.active-sidebar").removeClass("active-sidebar");
+
+    var activeTitle = activeSidebarTitle();
+    if (!activeTitle) return;
+
+    var activeKey = null;
+    Object.keys(ST._sidebarTree.nodeByKey).forEach(function (key) {
+      var entry = ST._sidebarTree.nodeByKey[key];
+      if (stTreeNorm(entry.page.title || entry.page.name) === activeTitle) activeKey = key;
+    });
+    if (!activeKey) return;
+
+    var $activeItem = $tree.find('.standard-sidebar-item[data-st-key="' + stTreeCssEsc(activeKey) + '"]').first();
+    $activeItem.addClass("active-sidebar");
+
+    var walkKey = ST._sidebarTree.parentOfKey[activeKey];
+    while (walkKey) {
+      var $ancestor = $tree.find('.standard-sidebar-item[data-st-key="' + stTreeCssEsc(walkKey) + '"]').first();
+      if ($ancestor.length) setTreeNodeExpanded($ancestor, true);
+      walkKey = ST._sidebarTree.parentOfKey[walkKey];
+    }
+  }
+
+  function installSidebarTreeHandlers() {
+    if (ST._sidebarTree.handlersInstalled) return;
+    ST._sidebarTree.handlersInstalled = true;
+
+    $(document).on("click", "#st-sidebar-tree .st-tree-toggle", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var $item = $(this).closest(".standard-sidebar-item");
+      if (!$item.length || !$item.children(".nested-container").length) return;
+      setTreeNodeExpanded($item, !$item.hasClass("st-tree-expanded"));
+    });
+
+    $(document).on("click", "#st-sidebar-tree .st-tree-link", function (e) {
+      e.preventDefault();
+      var $item = $(this).closest(".standard-sidebar-item");
+      var route = $(this).attr("data-route");
+      if ($item.children(".nested-container").length) setTreeNodeExpanded($item, true);
+      if (route) frappe.set_route(route);
+      setTimeout(syncTreeActiveState, 0);
+    });
+  }
+
+  function buildSidebarTree() {
+    if (ST._sidebarTree.building) return;
+    ST._sidebarTree.building = true;
+
+    frappe.call({
+      method: "solvronix_desk.api.get_workspaces",
+      callback: function (r) {
+        ST._sidebarTree.building = false;
+        var message = (r && r.message) || {};
+        if (message.unavailable) return; /* fail-soft: leave native sidebar as-is */
+
+        var pages = (message.pages || []).concat(message.private_pages || []);
+        if (!pages.length) return;
+
+        var $mount = $(".body-sidebar .body-sidebar-top").first();
+        if (!$mount.length) return;
+
+        var byParentKey = {};
+        pages.forEach(function (p) {
+          if (!p.parent_page) return;
+          var norm = stTreeNorm(p.parent_page);
+          if (!byParentKey[norm]) byParentKey[norm] = [];
+          byParentKey[norm].push(p);
+        });
+
+        var roots = pages.filter(function (p) { return !p.parent_page; });
+        if (!roots.length) return;
+
+        ST._sidebarTree.byParentKey = byParentKey;
+        ST._sidebarTree.parentOfKey = {};
+        ST._sidebarTree.nodeByKey = {};
+
+        var expandedSet = loadExpandedTreeSet();
+        var $root = $('<div id="st-sidebar-tree" class="st-sidebar-tree"></div>');
+        roots.forEach(function (page) {
+          $root.append(renderTreeNode(page, 0, byParentKey, expandedSet));
+        });
+
+        var existing = document.getElementById("st-sidebar-tree");
+        if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+        $mount.prepend($root);
+
+        ST._sidebarTree.built = true;
+        installSidebarTreeHandlers();
+        hideNativeSidebarItems();
+        syncTreeActiveState();
+      },
+    });
+  }
+
   function installWorkspaceBlockPickerLayerFix() {
     if (ST._workspaceBlockPickerLayerFix) return;
     ST._workspaceBlockPickerLayerFix = true;
@@ -1499,6 +1709,7 @@
       injectSidebarBrandingHeader();   /* retry — branding may already be cached */
       injectIconRail();
       patchNativeSidebar();
+      buildSidebarTree();
       injectPoweredBy();
     });
 
@@ -1513,6 +1724,12 @@
     $(document).on("page-change", function () {
       injectIconRail();
       patchNativeSidebar();
+      if (!document.getElementById("st-sidebar-tree")) {
+        buildSidebarTree();
+      } else {
+        hideNativeSidebarItems();
+        syncTreeActiveState();
+      }
       injectPoweredBy();
       injectSetupGuide();
       setTimeout(moveNativeBell, 400);

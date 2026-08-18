@@ -317,6 +317,59 @@
 }
 
 /* ══════════════════════════════════════════════════════════
+   SIDEBAR TREE — unified module tree (all installed apps)
+   Rendered by solvronix_desk.js (buildSidebarTree) inside
+   .body-sidebar-top, reusing Frappe's own item classnames so
+   every color/hover/active/dark-mode rule above already
+   applies. Only the chevron toggle and depth indentation
+   below are specific to the tree.
+   ══════════════════════════════════════════════════════════ */
+#st-sidebar-tree .item-anchor {
+  display: flex !important;
+  align-items: center !important;
+  padding-left: calc(8px + var(--st-tree-depth, 0) * 16px) !important;
+}
+
+#st-sidebar-tree .nested-container {
+  display: none;
+}
+#st-sidebar-tree .st-tree-item.st-tree-expanded > .nested-container {
+  display: block;
+}
+
+#st-sidebar-tree .st-tree-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  margin-right: 2px;
+  color: var(--st-sidebar-text-muted, #9CA3AF);
+  transition: transform 0.2s ease;
+}
+#st-sidebar-tree .st-tree-toggle-spacer {
+  visibility: hidden;
+}
+#st-sidebar-tree .st-tree-item.st-tree-expanded > .item-anchor > .st-tree-toggle {
+  transform: rotate(90deg);
+}
+#st-sidebar-tree .st-tree-toggle svg,
+#st-sidebar-tree .st-tree-toggle .icon {
+  width: 10px;
+  height: 10px;
+  stroke: currentColor;
+}
+
+/* Collapsed (icon-only, 64px) sidebar: no room for labels or nested rows —
+   show only root-level icons, matching how section-breaks are already
+   hidden in this same collapsed state above. */
+.body-sidebar-container:not(.expanded) #st-sidebar-tree .st-tree-toggle,
+.body-sidebar-container:not(.expanded) #st-sidebar-tree .nested-container {
+  display: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════
    DARK MODE — sidebar is brand-colored → restore white text
    ══════════════════════════════════════════════════════════ */
 html[data-theme="dark"] .body-sidebar,
