@@ -191,8 +191,13 @@
      the list via normal frappe.set_route() routing — no second list renderer.
   ──────────────────────────────────────────────────────────────────────────── */
   function railEnabled() {
-    var cfg = frappe.boot && frappe.boot.st_theme_config;
-    return !!(cfg && cfg.sidebar_layout === "Icon Rail");
+    /* Disabled: the unified Sidebar Tree (see buildSidebarTree()) is now the
+       single source of truth for the left panel, merging every installed
+       app's modules into one column — a second app-icon rail beside it would
+       just recreate the "two left sidebars" this replaced. Hardcoded off
+       rather than deleted so the Theme Studio "Icon Rail" option can be
+       revisited later without rebuilding this feature from scratch. */
+    return false;
   }
 
   function removeIconRail() {
