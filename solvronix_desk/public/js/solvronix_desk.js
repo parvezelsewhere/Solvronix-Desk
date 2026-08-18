@@ -1398,8 +1398,7 @@
 
   function renderTreeNode(page, depth, byParentKey, expandedSet) {
     var key = stTreeNodeKey(page);
-    var norm = stTreeNorm(page.title || page.name);
-    var children = byParentKey[norm] || [];
+    var children = byParentKey[key] || [];
     var hasChildren = children.length > 0;
     var route = stTreeRoute(page);
     var slugPath = route ? "/desk/" + encodeURIComponent(route).replace(/%2F/gi, "/") : "#";
@@ -1513,12 +1512,24 @@
         var $mount = $(".body-sidebar .body-sidebar-top").first();
         if (!$mount.length) return;
 
+        /* parent_page is a Link field storing the parent's docname (name),
+           which only matches its title by coincidence — index both so
+           children resolve to their parent's tree key regardless of which
+           one parent_page actually holds. */
+        var keyByNameOrTitle = {};
+        pages.forEach(function (p) {
+          var k = stTreeNodeKey(p);
+          if (p.name) keyByNameOrTitle[stTreeNorm(p.name)] = k;
+          if (p.title) keyByNameOrTitle[stTreeNorm(p.title)] = k;
+        });
+
         var byParentKey = {};
         pages.forEach(function (p) {
           if (!p.parent_page) return;
-          var norm = stTreeNorm(p.parent_page);
-          if (!byParentKey[norm]) byParentKey[norm] = [];
-          byParentKey[norm].push(p);
+          var parentKey = keyByNameOrTitle[stTreeNorm(p.parent_page)];
+          if (!parentKey) return; /* orphaned — parent not present in this page set */
+          if (!byParentKey[parentKey]) byParentKey[parentKey] = [];
+          byParentKey[parentKey].push(p);
         });
 
         var roots = pages.filter(function (p) { return !p.parent_page; });
