@@ -1502,15 +1502,28 @@
     frappe.call({
       method: "solvronix_desk.api.get_workspaces",
       callback: function (r) {
-        ST._sidebarTree.building = false;
         var message = (r && r.message) || {};
-        if (message.unavailable) return; /* fail-soft: leave native sidebar as-is */
+        if (message.unavailable) {
+          console.warn("[solvronix-tree] get_workspaces reported unavailable — leaving native sidebar as-is");
+          return;
+        }
 
         var pages = (message.pages || []).concat(message.private_pages || []);
-        if (!pages.length) return;
+        if (!pages.length) {
+          console.warn("[solvronix-tree] get_workspaces returned no pages");
+          return;
+        }
 
+        /* .body-sidebar-top is where Frappe's own item list lives, but fall
+           back to .body-sidebar itself if that wrapper isn't present in this
+           Frappe version — same fallback injectSidebarBrandingHeader() already
+           uses (solvronix_desk.js ~line 154) — rather than silently aborting. */
         var $mount = $(".body-sidebar .body-sidebar-top").first();
-        if (!$mount.length) return;
+        if (!$mount.length) $mount = $(".body-sidebar").first();
+        if (!$mount.length) {
+          console.warn("[solvronix-tree] no .body-sidebar mount point found in DOM");
+          return;
+        }
 
         /* parent_page is a Link field storing the parent's docname (name),
            which only matches its title by coincidence — index both so
@@ -1533,7 +1546,10 @@
         });
 
         var roots = pages.filter(function (p) { return !p.parent_page; });
-        if (!roots.length) return;
+        if (!roots.length) {
+          console.warn("[solvronix-tree] no root pages (every page has a parent_page)");
+          return;
+        }
 
         ST._sidebarTree.byParentKey = byParentKey;
         ST._sidebarTree.parentOfKey = {};
@@ -1553,8 +1569,46 @@
         installSidebarTreeHandlers();
         hideNativeSidebarItems();
         syncTreeActiveState();
+        console.info("[solvronix-tree] rendered " + roots.length + " root modules (" + pages.length + " pages total)");
+      },
+      error: function (err) {
+        console.error("[solvronix-tree] get_workspaces call failed", err);
+      },
+      always: function () {
+        /* Reset regardless of success/failure so one failed request can't
+           permanently wedge the feature off for the rest of the session —
+           every later retry (page-change, MutationObserver) would otherwise
+           silently no-op forever against the "building" guard above. */
+        ST._sidebarTree.building = false;
       },
     });
+  }
+
+  function installSidebarTreeObserver() {
+    /* Self-healing safety net: if Frappe's own sidebar rendering runs again
+       after our tree is inserted (or anything else mutates the sidebar) and
+       #st-sidebar-tree gets clobbered in the process, rebuild it — rather
+       than relying solely on the page-change handler's one-shot check. */
+    if (ST._sidebarTree.observerInstalled) return;
+    if (typeof MutationObserver === "undefined") return;
+
+    var container = document.querySelector(".body-sidebar-container") || document.querySelector(".body-sidebar");
+    if (!container) return;
+    ST._sidebarTree.observerInstalled = true;
+
+    var pending = null;
+    function scheduleCheck() {
+      if (pending) return;
+      pending = setTimeout(function () {
+        pending = null;
+        if (!document.getElementById("st-sidebar-tree")) {
+          console.warn("[solvronix-tree] #st-sidebar-tree disappeared from DOM — rebuilding");
+          buildSidebarTree();
+        }
+      }, 150);
+    }
+
+    new MutationObserver(scheduleCheck).observe(container, { childList: true, subtree: true });
   }
 
   function installWorkspaceBlockPickerLayerFix() {
@@ -1725,6 +1779,7 @@
       injectSidebarBrandingHeader();   /* retry — branding may already be cached */
       injectIconRail();
       patchNativeSidebar();
+      installSidebarTreeObserver();
       buildSidebarTree();
       injectPoweredBy();
     });
